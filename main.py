@@ -55,4 +55,4 @@ if __name__ == "__main__":
     
     execute_cuda_program()
 
-    create_video()
+    #create_video()

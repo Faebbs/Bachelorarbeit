@@ -4,11 +4,15 @@
 #include "./include/solvers.cuh"
 #include "./include/vtk.cuh"
 
-const auto r_max = 1.f;
-const auto r_min = 0.5f;
-const auto n_cells = 20u;
-const auto n_time_steps = 100u;
-const auto dt = 0.05;
+const auto r_max = 3.f; // Maximum distance for interaction; Cutoff distance
+const auto n_cells = 20u; 
+const auto n_time_steps = 1000u;
+const auto dt = 0.05; // Time step size
+
+// Parameters for Morse potential
+const auto r_e = 0.5f; // Equilibrium distance
+const auto D_e = 2.0f; // Depth of the potential well
+const auto alpha = 1.0f; // Width of the potential
 
 __device__ int *d_neig;
 __device__ int *d_activated;
@@ -41,10 +45,15 @@ __device__ float3 simulation_step(
         case 2: // Deactivated state
             d_activated[i] = 0;
     }
+    // Calculation of the force which is exuded by cell j on cell i. 
+    // Depends on the distance between the cells and the potential we choose.
 
-    auto a = 1;
-    auto F = a * (1 - 2 * dist);
-    //auto F = 2 * (r_min - dist) * (r_max - dist) + powf(r_max - dist, 2);
+    // Morse Potential: auto F = D_e * (expf(-2*alpha*(dist - r_e)) - 2*expf(-alpha*(dist - r_e)));
+    // Kraft abgeleitet daraus:
+    auto phi = expf(-alpha * (dist - r_e));
+    auto F = -2.0f * D_e * alpha * (1.0f - phi) * phi;
+
+    // Vector of force on cell i exerted by cell j
     dF = r * F / dist;
     return dF;
 }
@@ -54,7 +63,7 @@ int main(int argc, const char* argv[])
     // Prepare initial state
     Solution<float3, Gabriel_solver> cells{n_cells, 50, r_max};
     //random_sphere(r_min, cells);
-    regular_rectangle(r_min, 20, cells);
+    regular_rectangle(r_e+0.4, 20, cells);
 
     // n_neighbor property
     cells.copy_to_device();
