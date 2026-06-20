@@ -7,7 +7,7 @@
 //const auto r_max = 8.f; // Maximum distance for interaction; Cutoff distance
 const auto r_max = 2.f; // Maximum distance for interaction; Cutoff distance
 //const auto n_cells = 20u*25u; // Number of cells in the simulation
-const auto n_time_steps = 1000u;
+const auto n_time_steps = 2000;
 const auto dt = 0.05; // Time step size
 
 // Parameters for Morse potential
@@ -18,21 +18,22 @@ const auto alpha = 1.0f; // Width of the potential
 
 const auto r_start = r_e / 2;         // Resting radius
 const auto r_activated = r_start / 2; // Target radius when activated
-const auto r_decay = 0.9f;            // Exponential decay factor (0 < r_decay < 1): smaller = slower
+const auto r_decay_shrink = 5.0f;            // Exponential decay factor (0 < r_decay < 1): smaller = slower
+const auto r_decay_grow = 0.1f;
 
-const auto activation_delay = 5;  // Timesteps in delay state, before going to activated state
+const auto activation_delay = 2;  // Timesteps in delay state, before going to activated state
 const auto activation_duration = 10;  // Timesteps in activated state, before refreactory state
-const auto refractory_duration = 40;  // Timesteps in refractory state, before going back to deactivated state
+const auto refractory_duration = 200;  // Timesteps in refractory state, before going back to deactivated state
 
 //const auto sensitivity = 1.0f;  // Number of necessary neigbbors to trigger activation
 //const auto n_lifetime = log(10000)/(r_activated + (r_start - r_activated) * exp(-r_decay)); 
 //const auto force_threshold = r_activated + (r_start - r_activated) * exp(-r_decay * n_lifetime);  // Cumulative force needed to trigger activation
-const auto force_threshold = 0.12f;  // Half-activation force (K in Hill function)
+const auto force_threshold = 0.15f;  // Half-activation force (K in Hill function)
 const auto use_hill_function = false;  // Whether to use Hill function for activation probability instead of hard threshold
 const auto n_hill = 2.0f;            // Hill coefficient: steepness (higher = closer to hard threshold)
 
 // Timesteps at which activation is triggered
-int activation_steps[] = {100, 200, 300, 400};
+int activation_steps[] = {220};
 
 __device__ int *d_neig;
 __device__ int *d_activated;
@@ -40,9 +41,12 @@ __device__ int *d_prev_activated;
 __device__ float *d_radius;
 __device__ float3 *d_force_accum;
 
+//TODO Tile solver probieren, Und eine Surface definieren und drauf pinnen. Visualisation von Jörn GitLab ziehen um besseren Vedo Browser zu kriegen. 
+//TODO Erstmal 2D kontraktion waves und dann einfluss der Krümmung drauf messen. Danach dann an verschiedenen Stellen des Eis eine Kontraktion auslösen. (MArijas Thesis nochmal da lesen, mit Nachbarschaft bei Kümmung)
 
 // Stuff that happens once every time step before time step is taken
 int alter_cells_before(Solution<float3, Gabriel_solver>& cells, Property<float>& h_radius,
+//int alter_cells_before(Solution<float3, Grid_solver>& cells, Property<float>& h_radius,
                 Property<int>& h_activated, Property<float>& h_force_mag,
                 Property<int>& h_state_timer, int n_cells)
 {
@@ -69,7 +73,7 @@ int alter_cells_before(Solution<float3, Gabriel_solver>& cells, Property<float>&
                 break;
             }
             case 1: // Activated state: radius shrinks
-                h_radius.h_prop[i] = r_activated + (h_radius.h_prop[i] - r_activated) * expf(-r_decay);
+                h_radius.h_prop[i] = r_activated + (h_radius.h_prop[i] - r_activated) * expf(-r_decay_shrink);
                 // Timer for how long cell is in state 1, goes to 2 after defined duration
                 h_state_timer.h_prop[i]++;
                 if (h_state_timer.h_prop[i] >= activation_duration) {
@@ -78,7 +82,7 @@ int alter_cells_before(Solution<float3, Gabriel_solver>& cells, Property<float>&
                 }
                 break;
             case 2: // Refractory state: radius grows back to r_start
-                h_radius.h_prop[i] = r_start + (h_radius.h_prop[i] - r_start) * expf(-r_decay);
+                h_radius.h_prop[i] = r_start + (h_radius.h_prop[i] - r_start) * expf(-r_decay_grow);
                 // Timer for how long cell is in state 2, goes to 0 after defined duration
                 h_state_timer.h_prop[i]++;
                 if (h_state_timer.h_prop[i] >= refractory_duration) {
@@ -154,6 +158,7 @@ int main(int argc, const char* argv[])
 
     // Prepare initial state
     Solution<float3, Gabriel_solver> cells{n_cells, 50, r_max};
+    //Solution<float3, Grid_solver> cells{n_cells, 50, r_max};
     input.read_positions(cells); // Reads coordinates of vtk file
     //random_sphere(r_min, cells);
     //regular_rectangle(2.0f*r_e, 20, cells);
@@ -223,7 +228,7 @@ int main(int argc, const char* argv[])
                 }
             } else {
                 // Activate cells in a radius
-                float3 spot_center = {10.f, -12.f, 0.f};  // Sphere where activation starts
+                float3 spot_center = {-9.f, -12.f, 0.f};  // Sphere where activation starts
                 float spot_radius = 4.0f;
                 for (int i = 0; i < n_cells; i++) {
                     float3 p = cells.h_X[i];

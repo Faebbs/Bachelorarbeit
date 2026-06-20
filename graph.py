@@ -3,16 +3,25 @@ import matplotlib.pyplot as plt
 
 # Cell Radius Funktionen
 
-r_decay = 0.9
+r_decay_shrink = 5.0
+r_decay_grow = 0.1
 r_e = 1.0
 r_start = r_e / 2
 r_activated = r_start / 2
 D_e_morse = 2.0
 alpha_morse = 1.0
 dist_eq = 2 * r_e  # equilibrium center-to-center distance
-activation_delay = 5
-activation_duration = 50
-refractory_duration = 40
+activation_delay = 2
+activation_duration = 10
+refractory_duration = 50
+
+def shrink_radius(t, t_start, r_from, r_to):
+    # Radius schrumpft exponentiell von r_from auf r_to (State 1: Aktivierung)
+    return r_to + (r_from - r_to) * np.exp(-r_decay_shrink * (t - t_start))
+
+def grow_radius(t, t_start, r_from, r_to):
+    # Radius wächst exponentiell von r_from auf r_to zurück (State 2: Refraktär)
+    return r_to + (r_from - r_to) * np.exp(-r_decay_grow * (t - t_start))
 
 def cell_radius_cycle(steps):
     # State 7: delay — radius stays at r_start
@@ -22,18 +31,18 @@ def cell_radius_cycle(steps):
     t2 = activation_delay + activation_duration
     t3 = activation_delay + activation_duration + refractory_duration
 
-    r_after_activation = r_activated + (r_start - r_activated) * np.exp(-r_decay * activation_duration)
-    r_after_refractory = r_start + (r_after_activation - r_start) * np.exp(-r_decay * refractory_duration)
+    r_after_activation = shrink_radius(t2, t1, r_start, r_activated)
+    r_after_refractory = grow_radius(t3, t2, r_after_activation, r_start)
 
     return np.where(
         steps < t1,
         r_start,  # State 7: Verzögerung, Radius bleibt konstant
         np.where(
             steps < t2,
-            r_activated + (r_start - r_activated) * np.exp(-r_decay * (steps - t1)),  # State 1
+            shrink_radius(steps, t1, r_start, r_activated),  # State 1
             np.where(
                 steps < t3,
-                r_start + (r_after_activation - r_start) * np.exp(-r_decay * (steps - t2)),  # State 2
+                grow_radius(steps, t2, r_after_activation, r_start),  # State 2
                 r_after_refractory
             )
         )

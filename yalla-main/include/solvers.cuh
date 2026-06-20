@@ -523,8 +523,8 @@ __global__ void compute_cube_gabriel(const int n, const Pt* __restrict__ d_X,
     float3 sum_v{0};
     float sum_friction = 0;
 
-    int neighbour_id[100];
-    float neighbour_dist[100];
+    int neighbour_id[256];
+    float neighbour_dist[256];
     int n_neighs = 0;
 
     // First loop. Register all possible pairwise interactions based on
