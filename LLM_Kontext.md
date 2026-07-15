@@ -2,7 +2,7 @@
 
 > **Zweck dieses Dokuments:** Vollständiger Kontext aus allen bisherigen Claude-Chats (Claude Code in WSL/Windows + claude.ai Web), damit neue Chats sofort den Stand der Arbeit kennen. Grundgerüst zusammengestellt am 08.07.2026 aus 24 Claude-Code-Sessions (08.06.–07.07.) und 3 Web-Konversationen; **ergänzt um die Sessions 09.–12.07.2026** (Ei-Modell-Umbau, s. Ist-Box unten + §13). Dieses Dokument führt das kuratierte `Projektkontext_Bachelorarbeit.md` und die angehängten Sessions aus `Projektkontext.md` zusammen.
 >
-> **Wenn du (Claude) das hier liest:** Dies ist der Wissensstand, nicht zwingend der aktuelle Code-Stand. Wo konkrete Datei/Funktion/Zeile genannt wird, im Zweifel im Code verifizieren, bevor du darauf aufbaust. §1–§12 beschreiben den Stand vom **08.07**; der **aktuelle Ei-Code-Stand (12.07)** steht in der Box direkt nach dem TL;DR und in **§13**. Wo Parameter abweichen, gelten für das Ei die neueren Werte aus §13.
+> **Wenn du (Claude) das hier liest:** Dies ist der Wissensstand, nicht zwingend der aktuelle Code-Stand. Wo konkrete Datei/Funktion/Zeile genannt wird, im Zweifel im Code verifizieren, bevor du darauf aufbaust. §1–§12 beschreiben den Stand vom **08.07**; der **aktuelle Ei-Code-Stand (15.07, Original-Baseline nach Revert)** steht in der Box direkt nach dem TL;DR. **§13 ist historischer Verlauf (09.–12.07) und wurde am 15.07 rückgängig gemacht** — nicht als Code-Stand lesen. Wo Parameter abweichen, gilt für das Ei die Ist-Box.
 
 ---
 
@@ -16,22 +16,20 @@ Bachelorarbeit: **partikelbasierte GPU-Simulation, die untersucht, wie die Oberf
 - **Bisherige Beobachtung (kein gesicherter Schluss):** im aktuellen Modell **sinkt die gemessene Wellenausbreitung mit steigender Krümmung** (hält über die getestete Erregbarkeits-Achse). Arbeits*hypothese* zum Mechanismus: Krümmung ändert eher *wie viele* Zellen mitlaufen als *wie schnell*. Details, Vorbehalte und was noch nicht getestet ist → §5 (bewusst bias-arm gehalten).
 - **Titel (in der Begleit-PPT bereits übernommen):** *"Modelling the Effect of Surface Curvature on Contraction Wave Propagation in Tribolium castaneum"*.
 - **Biologische Motivation & Schlüssel-Literatur** (Kontraktionswellen in Trichoplax / Schwamm / Drosophila / Tribolium; mechanisches statt genetisches Feedback) → §12. Begleit-Präsentation: `BegleitPP.pptx` (82 Folien), inhaltlich mit diesem Dokument abgeglichen.
-- **⚠️ Achtung Code-Stand:** Das **Ei-Modell** wurde nach Redaktionsschluss (08.07) in den Sessions 09.–12.07 stark umgebaut (Zell/Surface-Trennung, selbstkalibriertes Gleichgewicht, `relax`-Export, `force_type`-Schalter, andere Parameter); der **Kohäsions-Kollaps** ist weiterhin offen. Ist-Zustand → Box unten + **§13**. §1/§2/§11 beschreiben den 08.07-Stand. Der **Kappen-/Sheet-Teil (Exp. 1)** ist davon unberührt.
+- **⚠️ Achtung Code-Stand:** Das **Ei-Modell** wurde 09.–12.07 stark umgebaut (Zell/Surface-Trennung, FPS-Zellen, selbstkalibriertes Gleichgewicht, `relax`-Export) — und am **15.07 wieder auf die Original-Baseline zurückgesetzt** (10000 Zellen aus `mesh_1`, Morse `r_e=0.3`, `r_max=2`; Pinning bleibt). Der **Überkompressions-/Kohäsions-Kollaps ist mit der Baseline zurück** und weiterhin offen. Ist-Zustand → Box unten. §13 = Verlaufs-Historie (rückgängig). Der **Kappen-/Sheet-Teil (Exp. 1)** ist von alldem unberührt.
 
 ---
 
-## ⚠️ Aktueller Ei-Stand (12.07.2026) — überschreibt §1/§2/§11 für MODEL_EGG
+## ⚠️ Aktueller Ei-Stand (15.07.2026) — überschreibt §1/§2/§11 für MODEL_EGG
 
-> Kompakter Ist-Zustand des Ei-Modells nach den Sessions 09.–12.07. Herleitung, Messwerte und der Verlauf dorthin stehen in **§13**. **Betrifft nur MODEL_EGG** — MODEL_CAP/MODEL_SHEET (Krümmungsstudie, Exp. 1) laufen unverändert mit den Werten aus §1/§2.
+> **Das Ei-Modell wurde am 15.07 auf die Original-Baseline zurückgesetzt** (Stand `Bachelorarbeit_alt` = letzter Git-Commit). Die 09.–12.07-Umbauten (FPS-Zellen, `relax`-Modus, `d_r_e`-Selbstkalibrierung, Tuning `r_max=1.4`/`r_e=0.27`) sind damit **rückgängig**. **§13 bleibt als historischer Verlauf, beschreibt aber NICHT mehr den Code-Stand** — der aktuelle Stand steht hier. **Betrifft nur MODEL_EGG** — MODEL_CAP/MODEL_SHEET (Krümmungsstudie, Exp. 1) laufen unverändert mit den Werten aus §1/§2.
 
-- **Zell/Surface-Trennung umgesetzt:** Zellen und Pinning-Surface kommen aus **getrennten Dateien** (nicht mehr beide aus `mesh_1`). Surface = feines Mesh mit Normalen (`initial_conditions_mesh_1.vtk` bzw. `target_surface_tribolium_1.vtk`); Zellen = dünnere, eigenständige Population (per FPS platziert / `horizontal_egg`, ~3000 statt 10000).
-- **`d_r_e` (Laufzeit-Gleichgewicht):** die Paarkraft nutzt eine Device-Variable statt der Compile-Konstante; in der Relaxations-Phase auf den **gemessenen mittleren Nachbarabstand selbst-kalibriert** (`d_r_e = s − 2·r_start`, nach Jörns Prinzip) → Ruhelage kräftefrei, unabhängig vom Startabstand.
-- **`force_type`-Schalter** (`'m'` Morse / `'l'` linear), zur Laufzeit im `simulation_step`-`switch`.
-- **`relax`-Modus:** foundation.cu relaxiert selbst (echte Sim-Physik + Pinning + Selbstkalibrierung, **keine Welle**) und exportiert `egg_cells_relaxed.vtk`; die Wellen-/Scan-Läufe laden dieses File. **Workflow:** `./a.out … relax …` einmal → dann `scan`/`vtk`.
-- **Neue Skripte:** `prepare_egg_cells.py` (Farthest-Point-Sampling der Startzellen, blue-noise, im Surface-Frame); `graph_Kraft.py` (erweitert: Fabians Morse + Jörns lineare + Marijas Polynom-Kraft überlagert).
-- **Aktueller Tuning-Stand (in Arbeit, NICHT final):** `r_max=1.4`, `surface_stiffness=4`, `r_e=0.27`, `force_type='m'`, `activation_duration=40`.
-- **Von §1/§2/§11 abweichende Ei-Werte:** `r_max` 2 → **1.4**; `surface_stiffness` 12 → **4**; `r_e` 0.3 → **0.27** (+ `d_r_e`-Selbstkalibrierung); `activation_duration` 10 → **40**; EGG lädt `mesh_1` **nicht mehr in `cells` UND `surface`**, sondern getrennt.
-- **🔴 KERNPROBLEM offen — Kohäsions-Kollaps:** Morse mit `r_max=2` zieht das Sheet zusammen (Abstand 0.81 → 0.38, `avg_neighbors → 15`, überpackt); die NN-Selbstkalibrierung **verstärkt** den Kollaps (positive Rückkopplung: klumpt → kleinerer NN → kleineres `d_r_e` → mehr Klumpen). Betrifft auch die Welle → „Ei zerreißt langsam". Nächste Schritte → §13.5.
+- **Zellen wieder direkt aus dem Mesh:** MODEL_EGG lädt **10000 Zellen** aus `initial_conditions_mesh_1.vtk` (kein FPS-`egg_cells_fps.vtk`/~3000 mehr). Zellen **und** Pinning-Surface kommen wieder aus **derselben Datei** (`mesh_1`) → Zellen starten exakt auf der Fläche (Pinning-Kraft anfangs ≈ 0).
+- **Kraft = Original-Morse:** `r_e=0.3` direkt. Die Device-Variable `d_r_e` existiert noch, ist fürs Ei aber **fest = `r_e=0.3`** gesetzt (**keine** NN-Selbstkalibrierung mehr). `force_type='m'` (Morse; der `'l'`-lineare Schalter existiert noch, wird aber nicht genutzt).
+- **Parameter = alt/Original:** `r_max=2`, `n_time_steps=1000`, `r_start=r_e/2=0.15`, `r_activated=0.075`, `activation_duration=10`, `surface_stiffness=4`, `force_threshold=0.15`.
+- **Pinning bleibt** (im Gegensatz zu `Bachelorarbeit_alt`, das **gar kein** Pinning hatte): `pin_to_surface` läuft jeden Step, Zellen auf `mesh_1` gehalten. Das ist der einzige dynamische Unterschied zur reinen alt-Physik; zusätzlich unterscheidet sich der Stimulus: **100 nächste Zellen** (`round(activation_fraction·N)`, `activation_fraction=0.01`) statt alt's „alle im Radius 4.0".
+- **Aufgeräumt:** `global_mean_spacing` gelöscht; **kein** `relax`-Modus; alle absoluten `/home/fabian`-Pfade → **relativ** (`.cu` relativ, `.py` via `Path(__file__)`/`os.path`).
+- **🔴 KERNPROBLEM wieder aktiv — Überkompression / No-Motion (§13.1):** bei Mesh-Abstand **0.266** und Morse-Gleichgewicht `2·r_e=0.6` sitzen ~95 % der Zellpaare im **abstoßenden Ast** → die Welle propagiert, bewegt aber kaum etwas (genau der 09.07-Befund). Mit der Baseline ist der No-Motion-/Kohäsions-Kollaps **zurück, nicht gelöst**.
 
 ---
 
@@ -53,7 +51,7 @@ Hergeleitet aus `V(r) = D_e·(1 − e^(−a(r−r_e)))²` via `F = −dV/dr` (si
 - **Overdamped-Dynamik** (`dX/dt = F`, keine Trägheit), **Heun-Integrator**, `dt = 0.05`, `friction_on_background`.
 - Parameter-Sets: Standard `r_e=1, D_e=2, alpha=1`; Ei-Modell `r_e=0.3`. `r_start = r_e/2`, `r_activated = r_start/2` → Sheet/Cap 0.5/0.25, Egg 0.15/0.075. `r_max=2` (Interaktions-Cutoff = `cube_size` des Grids). `dt=0.05`, `n_time_steps=2000`.
 
-> **Update (12.07, s. Ist-Box + §13):** Für das **Ei** gelten inzwischen `r_e=0.27` (+ `d_r_e`-Selbstkalibrierung) und `r_max=1.4`; zusätzlich existiert eine lineare Kraft-Alternative (`force_type='l'`). Die Werte hier gelten weiter für Cap/Sheet.
+> **Update (15.07):** Der 12.07-Zwischenstand (`r_e=0.27` + `d_r_e`-Selbstkalibrierung, `r_max=1.4`) ist **rückgängig** — das Ei ist zurück auf `r_e=0.3`, `r_max=2`, `d_r_e` fest = `r_e` (s. Ist-Box). Die lineare Kraft-Alternative (`force_type='l'`) existiert im Code weiter, wird aber nicht genutzt. Diese Werte gelten ohnehin für Cap/Sheet.
 
 ### Zell-Zustandsmaschine (`activated`-Feld)
 | State | Bedeutung | Radius-Verhalten |
@@ -94,7 +92,7 @@ Drei Solver mit gleichem Integrator, nur Nachbarsuche unterschiedlich: Tile (all
 - Rückstellkraft `F = −k·(r·n)·n` (r = Versatz zur Fläche, n = Flächennormale, k = `surface_stiffness = 12`). Projiziert nur die **senkrechte** Bewegungskomponente weg → Zellen bleiben auf der Fläche, gleiten frei entlang.
 - **EGG:** `cells` (beweglich, Gabriel_solver) + `surface`+`surface_norm` (eingefrorene Kopie, Tile_solver, nie integriert) beide aus `initial_conditions_mesh_1.vtk`. Zellen starten AUF der Fläche → Pinning-Kraft anfangs ≈ 0. Brute-Force-Nächster-Punkt-Suche O(n·n_grid). **Kein „Snapping"**, aber effektive Fläche = facettierte Näherung (stückweise Tangentialebenen); Genauigkeit ∝ Gitterdichte. (SHEET/CAP nutzen analytische Normalen → glatt.)
 
-> **Update (12.07, s. Ist-Box + §13):** Genau dieses „beide aus `mesh_1`" ist die Ursache der Überkompression/No-Motion (§13.1) und wurde aufgelöst: **Zellen und Surface kommen jetzt aus getrennten Dateien** (Surface = feines Mesh; Zellen = dünnere FPS-/`horizontal_egg`-Population). `surface_stiffness` fürs Ei inzwischen **4** (Jörn nutzt 3).
+> **Update (15.07):** Die 12.07-Auflösung (Zellen und Surface aus **getrennten** Dateien, FPS-Zellen) ist **rückgängig** — EGG lädt wieder **beide aus `mesh_1`** (10000 Zellen), also der hier beschriebene Zustand. Damit ist auch die Überkompression/No-Motion (§13.1) zurück. `surface_stiffness` fürs Ei ist **4** (Jörn nutzt 3).
 
 ### CAP-Modell: Exponential-Map (Kern der Krümmungsstudie)
 Flacher Abstand vom Zentrum = **geodätischer Abstand vom Pol**:
@@ -195,7 +193,7 @@ Zündet Welle an Stellen unterschiedlicher **lokaler** Krümmung des echten Eis.
 > Wie diese Dateien konkret zusammenspielen (Framework, Programmablauf, Scans) → **§11**. Neue Dateien aus den Sessions 09.–12.07 → **§13**.
 
 **Simulation (WSL, `/home/fabian/Bachelorarbeit/`):**
-- `yalla-main/foundation.cu` — Kern: Modelle, Morse-Kraft, State-Machine, Pinning-Kernel, Threshold/Hill-Aktivierung, Scan-Modus, Metriken. *(12.07: + `force_type`-Schalter, `d_r_e`, `relax`-Modus, Zell/Surface-Trennung — §13.5.)*
+- `yalla-main/foundation.cu` — Kern: Modelle, Morse-Kraft, State-Machine, Pinning-Kernel, Threshold/Hill-Aktivierung, Scan-Modus, Metriken. *(Übrig aus dem 12.07-Umbau: `force_type`-Schalter + `d_r_e`-Device-Var. **Rückgängig (15.07):** `relax`-Modus und Zell/Surface-Trennung — Ei lädt wieder `mesh_1`.)*
 - `yalla-main/include/solvers.cuh` — Gabriel/Grid/Tile-Solver, `compute_cube_gabriel` (Buffer, s.u.).
 - `yalla-main/include/vtk.cuh` — `read_positions`, `read_normals`. `inits.cuh` — `random_disk`. `polarity.cuh` — `bending_force`.
 - `graph.py` — Radius-/Kraft-/Hill-Kurven (analytische Referenz + Plots). **`graph_Kraft.py`** (neu, 12.07) — Morse + Jörns lineare + Marijas Polynom-Kraft überlagert.
@@ -203,7 +201,7 @@ Zündet Welle an Stellen unterschiedlicher **lokaler** Krümmung des echten Eis.
 - `analyse/egg_seed_kspread.py` — k-spread-Validierung der Ei-Seed-Auswahl.
 - `parameter_scan.py` — Kappen-Scan (Exp. 1). `egg_activation_scan.py` — Ei-Scan (Exp. 2). `main.py` — Einzellauf + Video.
 - **`prepare_egg_cells.py`** (neu, 12.07) — FPS-Platzierung der Startzellen auf der Surface. **`egg_peak_timing.py`** (neu) — Peak-/Timing-Auswertung. `shell_force_analysis.py` — analytische Schalen-Radialkraft (Kollaps-Analyse).
-- **Output-VTKs (neu, 12.07):** `egg_cells_relaxed.vtk` (relaxierte Zellen, von den Wellen-/Scan-Läufen geladen), `egg_cells_fps.vtk` (FPS-Platzierung vor Relaxation), `egg_curvature.vtk` (Krümmungsfelder).
+- **Output-VTKs:** `egg_curvature.vtk` (Krümmungsfelder, aus `egg_curvature.py`). *(`egg_cells_fps.vtk`/`egg_cells_relaxed.vtk` aus dem 12.07-Umbau liegen evtl. noch im Ordner, werden aber vom aktuellen Code **nicht** geladen — er lädt `mesh_1`.)*
 
 **Visualisierung (Windows, `…\Vedo_visualisierung\`):**
 - `egg_surface.py` — Gridpunkte + Normalen + ConvexHull, Seed-Punkte nach Krümmung eingefärbt (diskrete 12-Perzentil-Skala), Taste `v`. *(09.07: + `DATASET`/`SHOW_SEEDS`-Schalter für alle Meshes, robustes Normalen-Handling — §13.3.)*
@@ -240,7 +238,7 @@ Zündet Welle an Stellen unterschiedlicher **lokaler** Krümmung des echten Eis.
 Frühe Beobachtung: Das Ei (hohle Schale, eine Zelllage) **schrumpft unaufhörlich**. Ursache: Morse-Potential stark kohäsiv mit langer Reichweite (F(dist=2)≈−0.74) → (1) Schale ist kein Energieminimum (Klumpen hat mehr Bindungen), (2) Kohäsion = Oberflächenspannung, Laplace-Druck nach innen, kein Gegendruck (kein Dotter). **Geometrischer Effekt, kein Parameter-Artefakt** — kein Kraft-Parameter rettet die Schale (quantitativ per `shell_force_analysis.py` gezeigt). Größeres r_max macht es *schlimmer* (mehr Oberflächenspannung).
 - Lösungen: **A) Druckterm** `P = k·(V₀−V)/V₀`, radiale Auswärtskraft (Dotterdruck, selbstkorrigierend, formbewahrend) — umgesetzt (`pressure_strength`). Grenze: erhält Volumen, nicht Form (längliche Enden fallen ein). **B) Biegesteifigkeit** (`bending_force` via apikal-basale Polarität `Po_cell`, YALLA-nativ, `epithelium.cu`) — krümmungssensitiv, richtige Lösung für Formerhalt, aber float3→Po_cell-Umbau. (Für die spätere Krümmungsstudie wurde stattdessen auf Pinning + analytische Kappen ausgewichen, was das Kollaps-Problem umgeht.)
 
-> **Update (09.–12.07, s. §13):** Am **Ei-Modell** ist der Kollaps **nicht** umgangen, sondern **weiterhin das offene Kernproblem** — er wurde in den Sessions 09.–12.07 aktiv bearbeitet (Diagnose §13.1, Morse→linear-Versuch §13.4, Selbstkalibrierung §13.5). Neue Messung: Morse `r_max=2` zieht das relaxierte Sheet 0.81 → 0.38 zusammen, `avg_neighbors → 15`. Die NN-Selbstkalibrierung **verstärkt** ihn (positive Rückkopplung). Aussichtsreichster Hebel laut §13.4: **Gleichgewichts-Offset an den Zellabstand anpassen** statt das Kraftgesetz zu tauschen; alternativ gedeckelte/sättigende Adhäsion (= Morses Form).
+> **Update (15.07):** Am **Ei-Modell** ist der Kollaps **weiterhin das offene Kernproblem** — nach dem Revert auf die Baseline (Morse `r_max=2`, `r_e=0.3`, kein Pinning-Ersatz) sogar in seiner ursprünglichen Form zurück: bei Mesh-Abstand 0.266 « Gleichgewicht `2·r_e=0.6` sitzen die Zellen im abstoßenden Ast → No-Motion (§13.1). Die 09.–12.07-Ansätze (Morse→linear §13.4, NN-Selbstkalibrierung §13.5) sind rückgängig; ihre *Erkenntnis* bleibt der aussichtsreichste Hebel: **Gleichgewichts-Offset an den Zellabstand anpassen** (`eq ≈ Abstand`) bzw. gedeckelte/sättigende Adhäsion (= Morses Form) — statt das Kraftgesetz zu tauschen.
 
 ---
 
@@ -266,7 +264,7 @@ Frühe Beobachtung: Das Ei (hohle Schale, eine Zelllage) **schrumpft unaufhörli
 
 ## 11. Wie der Code funktioniert (yalla-main + foundation.cu + Scans)
 
-> Direkt aus dem Code gelesen (08.07.2026). Bei Abweichungen zwischen diesem Abschnitt und den chat-basierten Abschnitten oben gilt hier der Code. **Für das Ei gilt zusätzlich §13 (Stand 12.07):** dort sind `force_type`, `d_r_e`, `relax`-Modus und die Zell/Surface-Trennung ergänzt, die diesen 08.07-Snapshot fürs Ei teilweise überschreiben.
+> Direkt aus dem Code gelesen (08.07.2026). Bei Abweichungen zwischen diesem Abschnitt und den chat-basierten Abschnitten oben gilt hier der Code. **Fürs Ei maßgeblich ist die Ist-Box oben (15.07):** nach dem Revert entspricht MODEL_EGG wieder weitgehend diesem 08.07-Snapshot (10000 Zellen aus `mesh_1`, Morse `r_e=0.3`, `r_max=2`), plus Pinning; `force_type`/`d_r_e` bleiben im Code. Der 12.07-Umbau in §13 (`relax`, Trennung, Selbstkalibrierung) ist **rückgängig**.
 
 ### 11.1 yalla-main — das Framework (Groundwork)
 **YALLA** („yet another parallel agent-based model for morphogenesis", Germann et al. 2019, *Cell Systems*, DOI 10.1016/j.cels.2019.02.007, MIT-Lizenz, github.com/germannp/yalla). Agentenbasiertes Zellmodell für Morphogenese: Zellen = Punkte mit **paarweisen** Wechselwirkungen (+ optional Spin-artige Polaritäten für Epithelien), GPU-parallelisiert. Kompilieren: `nvcc -std=c++… -arch=sm_XX model.cu` → `./a.out` schreibt VTK (ParaView/Vedo). Fabians Modell ist ein eigenes „model.cu" = `foundation.cu`, das die Framework-Header aus `include/` nutzt.
@@ -286,14 +284,14 @@ Zentrale Bausteine (`yalla-main/include/`):
 ### 11.2 foundation.cu — Aufbau
 1. **Modell-Auswahl** oben per `#define` (genau eines von `MODEL_EGG`/`MODEL_SHEET`/`MODEL_CAP`, `#error`-Guard). **Aktuell aktiv: `MODEL_EGG`.**
 2. **Parameterblock** (globale `const`): r_max=2, dt=0.05, n_time_steps=2000; r_e=0.3(egg)/1.0(sonst), D_e=2, alpha=1; r_start=r_e/2, r_activated=r_start/2; r_decay_shrink=5.0, r_decay_grow=0.1; activation_delay=2, activation_duration=10, refractory_duration=200; force_threshold=0.15 (nicht-const, via argv[4]); use_hill_function=**false**, n_hill=2; activation_fraction=0.01, activation_min=3; surface_stiffness=12; cap_half_angle_deg=75; activation_steps={220}.
-   > **Ei-Update (12.07):** für MODEL_EGG inzwischen r_max=1.4, surface_stiffness=4, r_e=0.27 (+ Laufzeit-`d_r_e`), activation_duration=40, zusätzlich ein `force_type`-Schalter (`'m'`/`'l'`). Werte hier gelten für den 08.07-Stand bzw. Cap/Sheet — s. Ist-Box + §13.5.
+   > **Ei-Update (15.07):** Nach dem Revert gelten für MODEL_EGG **wieder die Original-Werte** r_max=2, r_e=0.3, activation_duration=10 (der 12.07-Stand 1.4/0.27/40 ist rückgängig). Erhalten bleiben: surface_stiffness=4, die Laufzeit-`d_r_e` (fürs Ei fest = r_e) und der `force_type`-Schalter (`'m'` aktiv). S. Ist-Box.5.
 3. **Device-Globals** (`__device__` Pointer): d_neig, d_activated, d_radius, d_force_accum, d_active_neighbor u.a. — via `cudaMemcpyToSymbol` mit den Property-Device-Arrays verbunden. *(12.07: + `d_r_e` als Laufzeit-Gleichgewicht.)*
 4. **Kernels/Funktionen:** `pin_to_surface_kernel` (+ sheet/cap-Varianten), `alter_cells_before` (Host-Zustandsmaschine), `simulation_step` (Device-Paarkraft), `place_on_cap`/`sheet_height`/`sheet_normal` (Geometrie).
 
 ### 11.3 Programmablauf (`main`)
-1. **CLI:** `./a.out <R> <seed> <mode> <threshold> [frac] [seed_x seed_y seed_z]`. Modi: `vtk` (VTK + spontane Aktivierung, Default), `scan` (keine VTK, SCAN_RESULT, propagation-only), `vtk_prop` (VTK + propagation-only, zum Visualisieren der reinen Welle). `require_active_neighbor = scan || vtk_prop`. *(12.07: zusätzlicher `relax`-Modus, der die Zellen relaxiert und `egg_cells_relaxed.vtk` exportiert — §13.5.)*
+1. **CLI:** `./a.out <R> <seed> <mode> <threshold> [frac] [seed_x seed_y seed_z]`. Modi: `vtk` (VTK + spontane Aktivierung, Default), `scan` (keine VTK, SCAN_RESULT, propagation-only), `vtk_prop` (VTK + propagation-only, zum Visualisieren der reinen Welle). `require_active_neighbor = scan || vtk_prop`. *(Der 12.07-`relax`-Modus ist am 15.07 entfernt — es gibt nur noch diese drei Modi.)*
 2. **Init (modellabhängig):** EGG lädt `initial_conditions_mesh_1.vtk` in `cells` (Gabriel_solver) **und** in eine eingefrorene `surface`+`surface_norm`-Kopie (Tile_solver, nie integriert). SHEET: `regular_rectangle` + auf Höhenfeld heben. CAP: N aus R (`N = round(0.9069·(R·θ_max/r_e)²)`, Floor 20), `grid_size` mit R skaliert, `random_disk` + `place_on_cap` (Exponential-Map), gibt geodätischen Patch-Radius + Winkel aus.
-   > **Ei-Update (12.07):** EGG lädt Zellen und Surface **nicht mehr aus derselben Datei** — Surface = feines Mesh (Normalen), Zellen = getrennte, dünnere Population (`egg_cells_relaxed.vtk` aus dem `relax`-Lauf, ursprünglich per `prepare_egg_cells.py`/FPS platziert). §13.5.
+   > **Ei-Update (15.07):** Wieder **wie hier beschrieben** — EGG lädt `initial_conditions_mesh_1.vtk` in `cells` (Gabriel) **und** in die eingefrorene `surface`/`surface_norm`-Kopie (Tile). Die 12.07-Trennung (getrennte Dateien, `egg_cells_relaxed.vtk`, `relax`-Modus) ist rückgängig; **es gibt keinen `relax`-Modus mehr**.
 3. **Properties anlegen:** activated (**Startwert 2 = refraktär für alle**), radius (=r_start), force_accum(0), force_mag(0), active_neighbor(0), state_timer(0), neighbours.
 4. **`fun`-Lambda** (läuft in `take_step` vor der Integration): setzt neig/force_accum/active_neighbor auf 0 und ruft das modellabhängige Pinning (`pin_to_surface`/`pin_to_sheet`/`pin_to_cap`) → schreibt Rückstellkraft in `d_dX`.
 5. **Zeitschleife** `for time_step = 0..2000`:
@@ -353,7 +351,9 @@ Die Motivation der Arbeit — *warum* ein rein mechanisches Modell für Kontrakt
 
 ## 13. Verlauf 09.–12.07.2026: Ei-Modell in Bewegung (nach Redaktionsschluss)
 
-> Diese Sessions sind **nach** dem Wissensstand von §1–§12 (08.07) entstanden und betreffen **ausschließlich MODEL_EGG**. Die Krümmungsstudie mit Kappen/Sheet (Exp. 1, §2/§4) ist unberührt. Wo Parameter von §1/§2/§11 abweichen, gelten hier die neueren Werte (kompakt in der Ist-Box oben). Roter Faden: das Ei bewegt sich nicht → Ursache Überkompression → Umbau der Kraft/Architektur → Kohäsions-Kollaps bleibt das offene Kernproblem.
+> **🔴 RÜCKGÄNGIG (15.07):** Alle in §13 beschriebenen Ei-**Code**-Änderungen (Zell/Surface-Trennung, FPS-Zellen, `relax`-Modus, `d_r_e`-Selbstkalibrierung, `force_type`-Tuning `r_max=1.4`/`r_e=0.27`/`activation_duration=40`) wurden am 15.07 auf die Original-Baseline zurückgesetzt. **§13 ist ab hier historischer Verlauf, NICHT der Code-Stand** (aktuell → Ist-Box oben). Die *Erkenntnisse* (Überkompression §13.1, Morse↔linear-Zielkonflikt §13.4) bleiben gültig.
+>
+> Diese Sessions sind **nach** dem Wissensstand von §1–§12 (08.07) entstanden und betreffen **ausschließlich MODEL_EGG**. Die Krümmungsstudie mit Kappen/Sheet (Exp. 1, §2/§4) ist unberührt. Roter Faden: das Ei bewegt sich nicht → Ursache Überkompression → Umbau der Kraft/Architektur → Kohäsions-Kollaps bleibt das offene Kernproblem.
 
 ### 13.1 Diagnose (09.07): „Die Welle läuft, aber sie bewegt nichts"
 Direkt aus einem `vtk_prop`-Lauf gemessen (nicht spekuliert), Code-Stand 09.07 (10000-Punkte-Mesh, `r_e=0.3`, `r_max=2`, `force_threshold=0.15`):
