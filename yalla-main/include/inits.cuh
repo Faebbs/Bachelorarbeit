@@ -16,8 +16,8 @@ void random_disk(
     float dist_to_nb, Solution<Pt, Solver>& points, unsigned int n_0 = 0)
 {
     assert(n_0 < *points.h_n);
-    std::random_device rd;
-    srand(rd());
+    // Note: seeding is left to the caller (use srand() before calling) so the
+    // layout can be made reproducible; this function no longer reseeds itself.
     // Radius based on hexagonal lattice
     auto r_max = pow((*points.h_n - n_0) / 0.9069, 1. / 2) * dist_to_nb / 2;
     for (auto i = n_0; i < *points.h_n; i++) {

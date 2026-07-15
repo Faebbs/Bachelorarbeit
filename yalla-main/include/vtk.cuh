@@ -225,6 +225,10 @@ public:
     // Read polarity of Pt, see polarity.cuh
     template<typename Pt, template<typename> class Solver>
     void read_polarity(Solution<Pt, Solver>& points);
+    // Read NORMALS section directly into the x/y/z components of Pt
+    // (no conversion to polar angles, unlike read_polarity)
+    template<typename Pt, template<typename> class Solver>
+    void read_normals(Solution<Pt, Solver>& points);
     // Read further field of Pt
     template<typename Pt, template<typename> class Solver>
     void read_field(Solution<Pt, Solver>& points, const char* data_name = "w",
@@ -334,6 +338,28 @@ void Vtk_input::read_polarity(Solution<Pt, Solver>& points)
             points.h_X[i].phi = atan2(y, x);
             points.h_X[i].theta = acos(z);  // The normals are unit vectors
         }
+    }
+}
+
+template<typename Pt, template<typename> class Solver>
+void Vtk_input::read_normals(Solution<Pt, Solver>& points)
+{
+    std::ifstream input_file(file_name);
+    assert(input_file.is_open());
+
+    input_file.seekg(find_entry("NORMALS", "polarity"));
+
+    std::string line;
+    std::vector<std::string> items;
+
+    // Read the normal vectors as raw float3 components
+    for (auto i = 0; i < n_points; i++) {
+        getline(input_file, line);
+        items = split(line);
+        points.h_X[i].x = stof(items[0]);
+        points.h_X[i].y = stof(items[1]);
+        points.h_X[i].z = stof(items[2]);
+        items.clear();
     }
 }
 

@@ -20,8 +20,12 @@ skip_frames = args.skip_frames # every n-th frame, 1 for all frames
 # Start timer
 start_time = time.time()
 
+# Project directories (this script lives in <project>/analyse)
+SCRIPT_DIR = Path(__file__).resolve().parent
+BASE_DIR = SCRIPT_DIR.parent
+
 # file path to load VTK files from
-path = "/home/fabian/Bachelorarbeit/output/"
+path = str(BASE_DIR / "output") + "/"
 data = "file_"
 pathcomplete = path + data
 
@@ -48,7 +52,8 @@ axes = Axes(
 # shifts axes down for better visibility    
 axes.pos(0, 0, -2)
 
-video = Video(f"/home/fabian/Bachelorarbeit/analyse/{name_video}.mp4", fps=1, backend='ffmpeg')
+video_path = str(SCRIPT_DIR / f"{name_video}.mp4")
+video = Video(video_path, fps=1, backend='ffmpeg')
 
 print()
 total_frames = math.ceil((end_timestep - start_timestep + 1) / skip_frames)
@@ -108,4 +113,4 @@ end_time = time.time()
 elapsed_time = end_time - start_time
 
 print(f"Video creation time:  {elapsed_time:.2f}s")
-print(f"Video saved to: /home/fabian/Bachelorarbeit/analyse/{name_video}.mp4")
+print(f"Video saved to: {video_path}")

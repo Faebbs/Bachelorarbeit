@@ -3,3 +3,7 @@ output/
 a.out
 *.mp4
 Joern_Projekt/
+scan_results/
+TempFiles/
+Joern_Projekt_Neu/
+__pycache__/
