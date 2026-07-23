@@ -5,6 +5,7 @@
 #include "./include/vtk.cuh"
 #include <algorithm>
 #include <cstring>
+#include <fstream>
 #include <utility>
 #include <vector>
 
@@ -34,11 +35,15 @@ const auto n_time_steps = 1000u;
 const auto dt = 0.05; // Time step size
 
 // Which force?
+#ifdef MODEL_EGG
+const char force_type = 'l'; // egg: capped linear force (repulsion/adhesion, no long-range cohesion); 'm' Morse
+#else
 const char force_type = 'm'; // (l)inear or (m)orse
+#endif
 
 // Parameters for Morse potential
 #ifdef MODEL_EGG
-const auto r_e = 0.3f; // Equilibrium distance, Egg
+const auto r_e = 1.111f; // Egg: cell radius r_start = r_e/2 = 0.556; equilibrium centre-distance 2*r_start = 1.111 = Joern's mean neighbour spacing
 #else
 const auto r_e = 1.0f; // Equilibrium distance, Sheet
 #endif
@@ -52,6 +57,21 @@ const auto lin_adhesion  = 1.0f;
 
 float r_start = r_e / 2;         // Resting radius (egg: set from the global spacing in main)
 float r_activated = r_start / 2; // Target radius when activated (follows r_start)
+
+// Per-cell radii (egg): each cell's rest radius is derived from its local neighbour
+// distances (~half the mean nearest-neighbour spacing) so cells reach up to their
+// neighbours' boundaries and fill the surface, even where packing is sparse. The
+// state machine shrinks/grows each cell relative to its OWN radius. Sheet/cap fill
+// these uniformly from the globals above.
+std::vector<float> pc_r_start;        // per-cell resting radius
+std::vector<float> pc_r_activated;    // per-cell contracted radius
+const float egg_shrink_factor = 0.5f; // activated = shrink_factor * rest (0.1 = to a tenth)
+// Render-only overlap: the extra VTK field "render_radius" is written as
+// egg_render_overlap * the physics radius so drawn spheres OVERLAP and fill the
+// interstitial gaps that just-touching circles always leave (~9% by geometry).
+// Colour/size by "render_radius" in Vedo. Does NOT affect the simulation.
+const float egg_render_overlap = 1.4f;
+
 const auto r_decay_shrink = 5.0f;            // Exponential decay factor (0 < r_decay < 1): smaller = slower
 const auto r_decay_grow = 0.1f;
 
@@ -73,7 +93,20 @@ const auto activation_fraction = 0.01f;  // 5 % of all cells
 const auto activation_min = 3;           // floor for very small (high-curvature) caps
 
 // Stiffness of the force that pins cells onto the egg surface
+#ifdef MODEL_EGG
+const auto surface_stiffness = 3.0f;   // soft pinning (Joern's value) so cells glide freely on the surface
+#else
 const auto surface_stiffness = 12.0f;
+#endif
+
+// EGG cell size (single uniform type). Radius r_start = r_e/2 = 0.556 so the
+// equilibrium centre-distance (2*r_start, with d_r_e = 0) equals Joern's relaxed
+// mean neighbour spacing 1.111. The cells start at the dense input spacing (~0.54)
+// and spread out under the linear force to cover the whole egg.
+const int   egg_relax_steps = 500;            // settling steps performed by the 'relax' mode (writes egg_cells_relaxed.vtk and exits). Not part of the wave run, so no frame offset.
+// Interaction cutoff: keeps ~6 neighbours interacting and no long-range cohesion.
+// Grid cube_size stays r_max, this only gates forces.
+const float egg_r_cut = 1.5f;
 
 // CAP model: fixed angular half-extent of the spherical cap. The cell count is
 // derived from this and R (N proportional to R^2), so the curvature scan stays
@@ -87,7 +120,8 @@ __device__ int *d_prev_activated;
 __device__ float *d_radius;
 __device__ float3 *d_force_accum;
 __device__ int *d_active_neighbor;  // per cell: 1 if a neighbour is currently in state 1
-__device__ float d_r_e;  // runtime force equilibrium (rest surface_dist); self-calibrated in the relaxation phase
+__device__ float d_r_e;  // force equilibrium (rest surface_dist); egg uses 0 (surface contact), sheet/cap use r_e
+__device__ float d_r_cut; // interaction cutoff (egg uses a short range to avoid long-range Morse clumping)
 
 // Pins every cell onto a static surface (frozen copy of the egg mesh).
 // For each cell the nearest surface grid point is found and a restoring force
@@ -245,6 +279,29 @@ void pin_to_cap(const int n, const float3* __restrict__ d_X, float3* d_dX,
 }
 #endif
 
+// Per-cell rest radius from local neighbour distances: half the mean distance to
+// the kmax nearest neighbours within cutoff. Anchors each cell's size at its
+// neighbours' boundaries (Joern-style variable radius) so the sheet has no gaps.
+std::vector<float> compute_cell_radii(const float3* X, int n, float cutoff, int kmax)
+{
+    std::vector<float> rad(n);
+    for (int i = 0; i < n; i++) {
+        std::vector<float> d;
+        for (int j = 0; j < n; j++) {
+            if (j == i) continue;
+            float dx = X[i].x - X[j].x, dy = X[i].y - X[j].y, dz = X[i].z - X[j].z;
+            float dd = sqrtf(dx * dx + dy * dy + dz * dz);
+            if (dd < cutoff) d.push_back(dd);
+        }
+        std::sort(d.begin(), d.end());
+        int k = (int)d.size() < kmax ? (int)d.size() : kmax;
+        float m = 0.f;
+        for (int t = 0; t < k; t++) m += d[t];
+        rad[i] = (k > 0) ? 0.5f * m / k : 0.5f * cutoff;
+    }
+    return rad;
+}
+
 // Stuff that happens once every time step before time step is taken
 int alter_cells_before(Solution<float3, Gabriel_solver>& cells, Property<float>& h_radius,
                 Property<int>& h_activated, Property<float>& h_force_mag,
@@ -277,8 +334,8 @@ int alter_cells_before(Solution<float3, Gabriel_solver>& cells, Property<float>&
 
                 break;
             }
-            case 1: // Activated state: radius shrinks
-                h_radius.h_prop[i] = r_activated + (h_radius.h_prop[i] - r_activated) * expf(-r_decay_shrink);
+            case 1: // Activated state: radius shrinks toward this cell's own target
+                h_radius.h_prop[i] = pc_r_activated[i] + (h_radius.h_prop[i] - pc_r_activated[i]) * expf(-r_decay_shrink);
                 // Timer for how long cell is in state 1, goes to 2 after defined duration
                 h_state_timer.h_prop[i]++;
                 if (h_state_timer.h_prop[i] >= activation_duration) {
@@ -286,8 +343,8 @@ int alter_cells_before(Solution<float3, Gabriel_solver>& cells, Property<float>&
                     h_state_timer.h_prop[i] = 0;
                 }
                 break;
-            case 2: // Refractory state: radius grows back to r_start
-                h_radius.h_prop[i] = r_start + (h_radius.h_prop[i] - r_start) * expf(-r_decay_grow);
+            case 2: // Refractory state: radius grows back to this cell's own rest radius
+                h_radius.h_prop[i] = pc_r_start[i] + (h_radius.h_prop[i] - pc_r_start[i]) * expf(-r_decay_grow);
                 // Timer for how long cell is in state 2, goes to 0 after defined duration
                 h_state_timer.h_prop[i]++;
                 if (h_state_timer.h_prop[i] >= refractory_duration) {
@@ -323,7 +380,7 @@ __device__ float3 simulation_step (float3 Xi, float3 r, float dist, int i, int j
     float3 dF{0};
     if (i == j) return dF;
 
-    if (dist > r_max) return dF;
+    if (dist > d_r_cut) return dF;
 
     d_neig[i] += 1;
 
@@ -368,6 +425,19 @@ __device__ float3 simulation_step (float3 Xi, float3 r, float dist, int i, int j
     return dF;
 }
 
+// Writes cell positions as a minimal legacy-VTK POLYDATA point cloud (POINTS +
+// VERTICES), readable by Vtk_input::read_positions. Used to persist the relaxed
+// egg cell sheet so a later wave run can start from the settled configuration.
+void write_positions_vtk(const std::string& fn, const float3* X, int n)
+{
+    std::ofstream f(fn);
+    f << "# vtk DataFile Version 3.0\nrelaxed egg cells\nASCII\nDATASET POLYDATA\n";
+    f << "POINTS " << n << " float\n";
+    for (int i = 0; i < n; i++) f << X[i].x << ' ' << X[i].y << ' ' << X[i].z << '\n';
+    f << "VERTICES " << n << ' ' << 2 * n << '\n';
+    for (int i = 0; i < n; i++) f << "1 " << i << '\n';
+}
+
 int main(int argc, const char* argv[])
 {
     // Command line:  ./a.out <R> <seed> <mode> <threshold>
@@ -386,6 +456,11 @@ int main(int argc, const char* argv[])
 
     const char* mode = (argc > 3) ? argv[3] : "vtk";
     bool scan_mode = (strcmp(mode, "scan") == 0);  // suppress VTK, print metrics
+    // Relax mode (egg only): load the raw cells, settle them, write the relaxed
+    // positions to egg_cells_relaxed.vtk and exit. The normal run then loads that
+    // pre-relaxed file, so the wave starts on a settled sheet (no frame offset,
+    // no spontaneous pre-firing). Driven as a first step by main.py.
+    bool relax_mode = (strcmp(mode, "relax") == 0);
     // Propagation-only: a cell may only activate if a neighbour is contracting
     // (no spontaneous firing). On for the scan and for the "vtk_prop" viz mode.
     bool require_active_neighbor = scan_mode || (strcmp(mode, "vtk_prop") == 0);
@@ -412,17 +487,27 @@ int main(int argc, const char* argv[])
         require_active_neighbor ? "propagation-only" : "spontaneous");
 
 #ifdef MODEL_EGG
-    // ----- Egg: cells loaded directly from the egg mesh (like the original) -----
-    // Cells are the full mesh point cloud (mesh_1, ~10000 points); the SAME file
-    // also provides the frozen pinning surface below, so cells start exactly on
-    // the surface. Morse uses r_e directly (no self-calibrated d_r_e).
-    Vtk_input input{"initial_conditions_mesh_1.vtk"};
+    // ----- Egg: cells and pinning surface loaded from SEPARATE files -----
+    // Cells: raw biological set (horizontal_egg, ~3000 pts) in RELAX mode, or the
+    // pre-relaxed egg_cells_relaxed.vtk (produced by a relax run) for the wave
+    // run. Pinning surface = the finer target surface (~33164 pts). All in the
+    // same coordinate frame, so cells start on the surface (pin force ~ 0).
+    const char* raw_cells = "Joern_Projekt/initial_data/dr1p75_0.vtk";
+    const char* relaxed_cells = "egg_cells_relaxed.vtk";
+    const char* cell_file = raw_cells;
+    if (!relax_mode) {
+        std::ifstream test(relaxed_cells);
+        if (test.good()) cell_file = relaxed_cells;
+        else printf("WARNING: %s not found - using raw cells. Run mode 'relax' first.\n", relaxed_cells);
+    }
+    printf("Cells loaded from: %s\n", cell_file);
+    Vtk_input input{cell_file};
     const int n_cells = input.n_points;
     Solution<float3, Gabriel_solver> cells{n_cells, 50, r_max};
     input.read_positions(cells);
 
     // --- Static surface for pinning: the fine egg mesh (never integrated) ---
-    Vtk_input surf_input{"initial_conditions_mesh_1.vtk"};
+    Vtk_input surf_input{"Joern_Projekt/initial_data/surfaces/target_surface_tribolium_1.vtk"};
     const int n_grid = surf_input.n_points;
     Solution<float3, Tile_solver> surface{n_grid};
     surf_input.read_positions(surface);
@@ -431,8 +516,9 @@ int main(int argc, const char* argv[])
     surf_input.read_normals(surface_norm);
     surface_norm.copy_to_device();
 
-    printf("Egg: %d cells (mesh_1) + %d surface pts (mesh_1)\n",
+    printf("Egg: %d cells (horizontal_egg) + %d surface pts (target_surface)\n",
         n_cells, n_grid);
+    // Radius comes straight from r_start = r_e/2 = 1.111 (no override).
 #elif defined(MODEL_SHEET)
     // ----- Cell sheet: flat rectangle projected onto a sphere-cap height field -----
     const int n_cells = sheet_nx * sheet_ny;
@@ -500,11 +586,41 @@ int main(int argc, const char* argv[])
     h_activated.copy_to_device();
     cudaMemcpyToSymbol(d_activated, &h_activated.d_prop, sizeof(d_activated));
 
-    // radius property, starts at r_start for all cells
+    // Per-cell radii: uniform by default; for the egg WAVE run (not relax) derive
+    // each cell's rest radius from its local neighbour distances so cells fill up to
+    // their neighbours' boundaries (variable radius, Joern-style). Relax keeps a
+    // uniform radius so cells first spread out to the target spacing.
+    pc_r_start.assign(n_cells, r_start);
+    pc_r_activated.assign(n_cells, r_activated);
+#ifdef MODEL_EGG
+    if (!relax_mode) {
+        pc_r_start = compute_cell_radii(cells.h_X, n_cells, egg_r_cut, 6);
+        for (int i = 0; i < n_cells; i++)
+            pc_r_activated[i] = pc_r_start[i] * egg_shrink_factor;
+        float rmin = pc_r_start[0], rmax = pc_r_start[0], rmean = 0.f;
+        for (int i = 0; i < n_cells; i++) {
+            rmin = fminf(rmin, pc_r_start[i]);
+            rmax = fmaxf(rmax, pc_r_start[i]);
+            rmean += pc_r_start[i];
+        }
+        printf("Per-cell rest radius: min=%.3f mean=%.3f max=%.3f (shrink factor %.2f)\n",
+            rmin, rmean / n_cells, rmax, egg_shrink_factor);
+    }
+#endif
+
+    // radius property, initialised to each cell's own rest radius
     Property<float> h_radius{n_cells, "radius"};
-    thrust::fill(h_radius.h_prop, h_radius.h_prop + n_cells, r_start);  // Standard-Radius, equally for all cells at half of equilibrium distance
+    for (int i = 0; i < n_cells; i++) h_radius.h_prop[i] = pc_r_start[i];
     h_radius.copy_to_device();
     cudaMemcpyToSymbol(d_radius, &h_radius.d_prop, sizeof(d_radius));
+
+    // Render-only radius (VTK "render_radius"): overlap-scaled copy of the physics
+    // radius so drawn spheres fill the surface. Physics uses h_radius unchanged.
+    float render_overlap = 1.0f;
+#ifdef MODEL_EGG
+    render_overlap = egg_render_overlap;
+#endif
+    Property<float> h_render_radius{n_cells, "render_radius"};
 
     // accumulated force vector property (device-side accumulation)
     Property<float3> h_force_accum{n_cells, "force_accum"};
@@ -525,7 +641,7 @@ int main(int argc, const char* argv[])
     // state timer property, counts how long cell has been in current state, starts at 0 for all cells
     Property<int> h_state_timer{n_cells, "state_timer"};
     thrust::fill(h_state_timer.h_prop, h_state_timer.h_prop + n_cells, 0);
-    
+
     // Resets neighbors and accumulated forces to 0, before each time step
     auto fun = [&](const int n, const float3* __restrict__ d_X, float3* d_dX) {
         thrust::fill(thrust::device, h_neig.d_prop, h_neig.d_prop + n, 0);
@@ -573,17 +689,30 @@ int main(int argc, const char* argv[])
     int peak_active = 0;             // max #cells SIMULTANEOUSLY in state 1 (front size)
     int t_peak = -1;                 // timestep at which that peak occurs
 
-    // Force equilibrium gap (surface_dist at rest), set ONCE. For the egg the
-    // cells are packed (2*r_start = global mean spacing), so the equilibrium is
-    // essentially "surfaces touching" - the sheet holds by its repulsion core,
-    // and local density (curvature) drives the local force. Sheet/cap layouts
-    // use their regular spacing 2*r_e.
+    // Interaction cutoff + force equilibrium (surface_dist at rest).
 #ifdef MODEL_EGG
-    const float nb_spacing = 2.f * r_e;       // Morse equilibrium 2*r_e
-    { float d = r_e; cudaMemcpyToSymbol(d_r_e, &d, sizeof(float)); }
+    const float nb_spacing = 1.111f;   // ~neighbour spacing (neighbour-count metric only)
+    // Equilibrium at surface contact (d_r_e = 0): rest centre-distance = 2*r_start
+    // = 1.111. The capped linear force + cutoff give ~6 neighbours and no clumping.
+    { float rc = egg_r_cut; cudaMemcpyToSymbol(d_r_cut, &rc, sizeof(float)); }
+    { float d = 0.f;        cudaMemcpyToSymbol(d_r_e,   &d,  sizeof(float)); }
+
+    // RELAX MODE: settle the raw cells (forces + pinning only, no activation),
+    // write the relaxed positions to egg_cells_relaxed.vtk, then exit. The wave
+    // run (any other mode) skips this - it already loaded the relaxed cells.
+    if (relax_mode) {
+        printf("Relaxing %d cells for %d steps ...\n", n_cells, egg_relax_steps);
+        for (int rs = 0; rs < egg_relax_steps; rs++)
+            cells.take_step<simulation_step, friction_on_background>(dt, fun);
+        cells.copy_to_host();
+        write_positions_vtk("egg_cells_relaxed.vtk", cells.h_X, n_cells);
+        printf("Wrote egg_cells_relaxed.vtk (%d cells). Done.\n", n_cells);
+        return 0;
+    }
 #else
-    const float nb_spacing = 2.f * r_e;       // regular layouts
-    { float d = r_e; cudaMemcpyToSymbol(d_r_e, &d, sizeof(float)); }
+    const float nb_spacing = 2.f * r_e;   // regular layouts
+    { float rc = r_max; cudaMemcpyToSymbol(d_r_cut, &rc, sizeof(float)); }
+    { float d = r_e;    cudaMemcpyToSymbol(d_r_e,   &d,  sizeof(float)); }
 #endif
 
     // Time step loop
@@ -694,6 +823,9 @@ int main(int argc, const char* argv[])
             output.write_property(h_neig);
             output.write_property(h_activated);
             output.write_property(h_radius);
+            for (int i = 0; i < n_cells; i++)
+                h_render_radius.h_prop[i] = render_overlap * h_radius.h_prop[i];
+            output.write_property(h_render_radius);
             output.write_property(h_force_mag);
         }
     }

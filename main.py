@@ -49,6 +49,18 @@ def compile_cuda_code():
         print("Error: NVCC compiler not found. Please make sure CUDA toolkit is installed.")
         return False
     
+def execute_relaxation():
+    # Egg only: settle the raw cells and write egg_cells_relaxed.vtk, which the
+    # main run below then loads. Decouples the relaxation from the wave so the
+    # wave starts on a settled sheet (activation stays at timestep 220).
+    args = [str(BASE_DIR / "a.out"), str(Kappen_radius), str(seed), "relax", str(threshold)]
+    try:
+        subprocess.run(args, cwd=BASE_DIR, check=True)
+        print("Relaxation completed (egg_cells_relaxed.vtk written).")
+    except subprocess.CalledProcessError as e:
+        print(f"Relaxation failed with error code {e.returncode}")
+        sys.exit(1)
+
 def execute_cuda_program():
     # Execute the compiled program
     args = [
@@ -88,7 +100,8 @@ if __name__ == "__main__":
         sys.exit(1)
     else:
         print("Compilation completed successfully.")
-    
+
+    execute_relaxation()
     execute_cuda_program()
 
     #create_video()
